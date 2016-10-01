@@ -45,7 +45,7 @@ int value = 0;
 bool ntp_ready = false;
 
 // seconds to water for.
-unsigned int watering_duration = 3;
+unsigned int watering_duration = 30;
 // seconds between waterings
 unsigned int watering_interval = 5*60;
 
@@ -119,7 +119,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if(tmp == "run"){
     //Serial.println("Run: " + pl);
     //run_duration = pl.toInt();
-    start_watering();
+    if(pl.toInt() > 0){
+      start_watering();
+    }else{
+      stop_watering();
+    }
   }
   
   if(tmp == "interval"){
@@ -217,7 +221,7 @@ void setup() {
 
 unsigned long next_disp = 0;
 unsigned long last_published_pulse_count = 0;
-time_t next_water = tmConvert_t(2016,10,01, 10, 30, 00);
+time_t next_water = tmConvert_t(2020,01,01, 00, 00, 00);
 
 
 
@@ -225,7 +229,7 @@ time_t next_water = tmConvert_t(2016,10,01, 10, 30, 00);
 void start_watering(){
   state = STATE_WATERING;
   run_duration = watering_duration;
-  next_water = now() + watering_interval;
+  
   //lcd.clear();
   //lcd.print("Watering");
   relay(1);
@@ -235,6 +239,7 @@ void stop_watering(){
   relay(0);
   lcd.clear();
   lcd.print("Watering finish.");
+  next_water = now() + watering_interval;
   state = STATE_READY;
 }
 
@@ -280,8 +285,8 @@ void loop() {
     if(!ntp_ready){
       if(now() > tmConvert_t(2016, 1, 1, 0, 0, 0)){
         ntp_ready = true;
-        // start watering in 5 seconds.
-        next_water = n + 5;
+        // start watering in 30 seconds.
+        next_water = n + 30;
       }else{
         lcd.print("Waiting for NTP");
         return;  
@@ -305,7 +310,8 @@ void loop() {
     //lcd.print(NTP.getTimeStr());
     //lcd.print("      ");
     lcd.setCursor(0,1);
-    lcd.print(pulse_count,DEC);
+    lcd.print("Used " + String(pulse_count * 0.0025, 3) + "L");
+    //lcd.print(pulse_count,DEC);
     
 
     if (last_published_pulse_count != pulse_count) {
@@ -319,8 +325,9 @@ void loop() {
 
     if(state == STATE_WATERING){
       lcd.setCursor(0,0);
-      lcd.print(pulse_count,DEC);
-      lcd.print("      ");
+      lcd.print("Used " + String(pulse_count * 0.0025, 3) + "L");
+      //lcd.print(pulse_count,DEC);
+      //lcd.print("      ");
       //lcd.print("Watering        ");
       lcd.setCursor(0,1);
       lcd.print(NTP.getTimeStr(run_duration) + "        ");

@@ -38,6 +38,10 @@ PubSubClient client(espClient);
 
 int run_duration = 0;
 
+unsigned long next_disp = 0;
+unsigned long last_published_pulse_count = 0;
+time_t next_water;
+
 long lastMsg = 0;
 char msg[50];
 int value = 0;
@@ -48,6 +52,38 @@ bool ntp_ready = false;
 unsigned int watering_duration = 30;
 // seconds between waterings
 unsigned int watering_interval = 5*60;
+
+unsigned int hour_start_watering = 6;
+unsigned int hour_stop_watering = 18;
+
+time_t tmConvert_t(int YYYY, byte MM, byte DD, byte hh, byte mm, byte ss)
+{
+  tmElements_t tmSet;
+  tmSet.Year = YYYY - 1970;
+  tmSet.Month = MM;
+  tmSet.Day = DD;
+  tmSet.Hour = hh;
+  tmSet.Minute = mm;
+  tmSet.Second = ss;
+  return makeTime(tmSet);         //convert to time_t
+}
+
+time_t startOfDay(time_t t){
+  tmElements_t tmp;
+  breakTime(t, tmp);
+  tmp.Hour = 0;
+  tmp.Minute = 0;
+  tmp.Second = 0;
+  return makeTime(tmp);
+}
+
+void updateNextWater(){
+  time_t t = now();
+  next_water = now() + watering_interval;
+  if(hour(t) > hour_stop_watering){
+    next_water = startOfDay(t) + 24*3600+ ((unsigned int)hour_start_watering) * 3600;
+  }
+}
 
 void setup_ntp(){
   NTP.onNTPSyncEvent([](NTPSyncEvent_t error) {
@@ -62,6 +98,8 @@ void setup_ntp(){
       Serial.print("Got NTP time: ");
       Serial.println(NTP.getTimeDateString(NTP.getLastNTPSync()));
       ntp_ready = true;
+      next_water = now() + (unsigned long)30;
+      updateNextWater();
     }
     
   });
@@ -100,7 +138,37 @@ void setup_wifi() {
 }
 
 
+void relay(byte state){
+  if(state == 0){
+    pinMode(PIN_RELAY, INPUT);
+  }else{
+    pinMode(PIN_RELAY, OUTPUT);
+    digitalWrite(PIN_RELAY,0);  
+  }
+  
+}
 
+
+
+void start_watering(){
+  state = STATE_WATERING;
+  run_duration = watering_duration;
+  
+  //lcd.clear();
+  //lcd.print("Watering");
+  relay(1);
+}
+
+void stop_watering(bool manual){
+  relay(0);
+  lcd.clear();
+  lcd.print("Watering finish.");
+  if(!manual){
+    updateNextWater();
+  }
+  //next_water = now() + watering_interval;
+  state = STATE_READY;
+}
 
 void callback(char* topic, byte* payload, unsigned int length) {
   String tmp;
@@ -122,7 +190,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     if(pl.toInt() > 0){
       start_watering();
     }else{
-      stop_watering();
+      stop_watering(true);
     }
   }
   
@@ -138,6 +206,13 @@ void callback(char* topic, byte* payload, unsigned int length) {
     //start_watering();
   }
 
+  if(tmp == "hr_start"){
+    hour_start_watering = pl.toInt();
+  }
+
+  if(tmp == "hr_stop"){
+    hour_stop_watering = pl.toInt();
+  }
 }
 
 void reconnect() {
@@ -161,15 +236,8 @@ void reconnect() {
   }
 }
 
-void relay(byte state){
-  if(state == 0){
-    pinMode(PIN_RELAY, INPUT);
-  }else{
-    pinMode(PIN_RELAY, OUTPUT);
-    digitalWrite(PIN_RELAY,0);  
-  }
-  
-}
+
+
 
 void flowPulse(){
   pulse_count++;
@@ -214,46 +282,13 @@ void setup() {
   ArduinoOTA.begin();
 
   attachInterrupt(PIN_FLOW, flowPulse, RISING); // use for Ground connection not Vcc connection
-  //pinMode(PIN_RELAY, OUTPUT);
-  //relay(1);
-}
-
-
-unsigned long next_disp = 0;
-unsigned long last_published_pulse_count = 0;
-time_t next_water = tmConvert_t(2020,01,01, 00, 00, 00);
-
-
-
-
-void start_watering(){
-  state = STATE_WATERING;
-  run_duration = watering_duration;
   
-  //lcd.clear();
-  //lcd.print("Watering");
-  relay(1);
+  next_water = tmConvert_t(2020,01,01, 00, 00, 00);
 }
 
-void stop_watering(){
-  relay(0);
-  lcd.clear();
-  lcd.print("Watering finish.");
-  next_water = now() + watering_interval;
-  state = STATE_READY;
-}
 
-time_t tmConvert_t(int YYYY, byte MM, byte DD, byte hh, byte mm, byte ss)
-{
-  tmElements_t tmSet;
-  tmSet.Year = YYYY - 1970;
-  tmSet.Month = MM;
-  tmSet.Day = DD;
-  tmSet.Hour = hh;
-  tmSet.Minute = mm;
-  tmSet.Second = ss;
-  return makeTime(tmSet);         //convert to time_t
-}
+
+
 
 
 void loop() {
@@ -283,23 +318,20 @@ void loop() {
     lcd.setCursor(0,0);
     
     if(!ntp_ready){
-      if(now() > tmConvert_t(2016, 1, 1, 0, 0, 0)){
-        ntp_ready = true;
-        // start watering in 30 seconds.
-        next_water = n + 30;
-      }else{
-        lcd.print("Waiting for NTP");
-        return;  
-      }
+    
+      lcd.print("Waiting for NTP");
+      return;  
+    
     }
 
     if(state == STATE_READY){
-      //lcd.print("Now:  " + NTP.getTimeStr()+"  ");  
-      //lcd.setCursor(0,1);
       lcd.setCursor(0,0);
+      lcd.print(NTP.getTimeStr()+"        ");  
+      //lcd.setCursor(0,1);
+      lcd.setCursor(0,1);
       if(next_water > n){
         time_t tdiff = next_water - now();
-        lcd.print("Next: " + NTP.getTimeStr(tdiff)+"        ");      
+        lcd.print(NTP.getTimeStr(tdiff));      
       }else{
         // we need to water!
         start_watering();
@@ -309,8 +341,12 @@ void loop() {
     
     //lcd.print(NTP.getTimeStr());
     //lcd.print("      ");
-    lcd.setCursor(0,1);
-    lcd.print("Used " + String(pulse_count * 0.0025, 3) + "L");
+    
+    
+    //lcd.setCursor(0,1);
+    //lcd.print("Used " + String(pulse_count * 0.0025, 3) + "L");
+    
+    
     //lcd.print(pulse_count,DEC);
     
 
@@ -335,7 +371,7 @@ void loop() {
       run_duration--;
       if(run_duration <= 0){
         //start_watering();
-        stop_watering();        
+        stop_watering(false);        
       }
     }
 
